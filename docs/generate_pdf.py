@@ -29,28 +29,32 @@ css = CSS(string="""
     margin: 20mm 18mm 20mm 18mm;
 }}
 body {{
-    font-family: "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", "Yu Gothic",
-                 "Meiryo", sans-serif;
-    font-size: 11pt;
-    line-height: 1.7;
+    font-family: "Noto Serif CJK JP", "Hiragino Mincho ProN", "Yu Mincho",
+                 "MS Mincho", serif;
+    font-size: 10.5pt;
+    line-height: 1.8;
     color: #222;
 }}
+h1, h2, h3 {{
+    font-family: "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", "Yu Gothic",
+                 "MS Gothic", sans-serif;
+}}
 h1 {{
-    font-size: 22pt;
+    font-size: 20pt;
     color: #1a5276;
     border-bottom: 3px solid #1a5276;
     padding-bottom: 8px;
     margin-top: 0;
 }}
 h2 {{
-    font-size: 15pt;
+    font-size: 14pt;
     color: #2c3e50;
     border-bottom: 1px solid #bdc3c7;
     padding-bottom: 5px;
     margin-top: 25px;
 }}
 h3 {{
-    font-size: 12pt;
+    font-size: 11.5pt;
     color: #34495e;
     margin-top: 18px;
 }}
@@ -68,20 +72,25 @@ th {{
     background-color: #ecf0f1;
     font-weight: bold;
 }}
+th, td {{
+    font-family: "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", sans-serif;
+    font-size: 9.5pt;
+}}
 code {{
     background-color: #f4f4f4;
     padding: 2px 6px;
     border-radius: 3px;
-    font-size: 10pt;
-    font-family: "Menlo", "Consolas", monospace;
+    font-size: 9.5pt;
+    font-family: "Noto Sans Mono CJK JP", "Menlo", "Consolas", monospace;
 }}
 pre {{
-    background-color: #2d2d2d;
-    color: #f8f8f2;
+    background-color: #f5f5f5;
+    color: #333;
     padding: 14px;
-    border-radius: 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
     overflow-x: auto;
-    font-size: 9.5pt;
+    font-size: 9pt;
     line-height: 1.5;
 }}
 pre code {{
