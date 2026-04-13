@@ -55,7 +55,15 @@ source ~/.bashrc
 
 ## 使い方
 
-### マイク入力（基本）
+### GUI版（推奨）
+
+```bash
+python groq_voice_gui.py
+```
+
+ボタン操作で録音開始/停止。モード選択・議事録生成・クリップボードコピー・保存フォルダを開くなど全てGUIから操作できます。
+
+### CLI版（マイク入力）
 
 ```bash
 python groq_voice.py
