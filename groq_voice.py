@@ -56,6 +56,39 @@ CORRECTION_SYSTEM_PROMPT = """\
 
 修正後のテキストのみを出力してください。"""
 
+MINUTES_SYSTEM_PROMPT = """\
+あなたは会議の議事録を作成する専門家です。
+
+音声認識から得られた会議のテキストを基に、構造化された議事録を作成してください。
+
+以下のフォーマットで出力してください：
+
+# 議事録
+
+## 概要
+（会議の目的・テーマを1〜2文で要約）
+
+## 参加者
+（会話の内容から推定できる参加者を列挙。不明な場合は「参加者不明」と記載）
+
+## 議論内容
+（主要な議題ごとにまとめる。箇条書きで整理）
+
+## 決定事項
+（会議で決まったことを箇条書きで列挙。なければ「特になし」）
+
+## アクションアイテム
+（誰が何をいつまでにやるかを箇条書きで列挙。なければ「特になし」）
+
+## 備考
+（その他の重要な情報があれば記載。なければ省略）
+
+注意事項：
+- 元の発言の意味を変えないこと
+- 推測で情報を追加しないこと
+- 簡潔かつ正確に記述すること
+- 議事録のみを出力し、説明やコメントは不要"""
+
 
 # ── 音声デバイス検出 ──────────────────────────────────────────────────────────
 
@@ -459,6 +492,24 @@ def correct_text(client: Groq, raw_text: str) -> str:
     return completion.choices[0].message.content
 
 
+def generate_minutes(client: Groq, corrected_text: str) -> str:
+    """校正済みテキストから議事録を生成する。"""
+    if not corrected_text.strip():
+        return ""
+
+    completion = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=[
+            {"role": "system", "content": MINUTES_SYSTEM_PROMPT},
+            {"role": "user", "content": corrected_text},
+        ],
+        temperature=0.3,
+        max_tokens=4096,
+    )
+
+    return completion.choices[0].message.content
+
+
 # ── 出力 ──────────────────────────────────────────────────────────────────────
 
 def copy_to_clipboard(text: str) -> bool:
@@ -480,11 +531,11 @@ def copy_to_clipboard(text: str) -> bool:
     return False
 
 
-def save_to_file(text: str, output_dir: str = "output") -> Path:
+def save_to_file(text: str, output_dir: str = "output", prefix: str = "transcription") -> Path:
     """テキストをタイムスタンプ付きファイルに保存する。"""
     os.makedirs(output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = Path(output_dir) / f"transcription_{timestamp}.txt"
+    filepath = Path(output_dir) / f"{prefix}_{timestamp}.txt"
     filepath.write_text(text, encoding="utf-8")
     return filepath
 
@@ -492,6 +543,7 @@ def save_to_file(text: str, output_dir: str = "output") -> Path:
 def display_results(
     raw_text: str,
     corrected_text: str,
+    minutes_text: str = None,
     save: bool = True,
     clipboard: bool = True,
     output_dir: str = "output",
@@ -509,8 +561,18 @@ def display_results(
     print(corrected_text)
     print("=" * 60)
 
+    if minutes_text:
+        print()
+        print("=" * 60)
+        print("[議事録]")
+        print("-" * 60)
+        print(minutes_text)
+        print("=" * 60)
+
+    # クリップボードには議事録があればそれを、なければ校正テキストをコピー
+    clip_text = minutes_text if minutes_text else corrected_text
     if clipboard:
-        if copy_to_clipboard(corrected_text):
+        if copy_to_clipboard(clip_text):
             print("-> クリップボードにコピーしました")
         else:
             if IS_MACOS:
@@ -519,8 +581,11 @@ def display_results(
                 print("-> クリップボードへのコピーに失敗（xclip/xsel をインストールしてください）")
 
     if save:
-        filepath = save_to_file(corrected_text, output_dir)
+        filepath = save_to_file(corrected_text, output_dir, prefix="transcription")
         print(f"-> ファイルに保存しました: {filepath}")
+        if minutes_text:
+            minutes_path = save_to_file(minutes_text, output_dir, prefix="minutes")
+            print(f"-> 議事録を保存しました: {minutes_path}")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -548,6 +613,10 @@ def parse_args():
     parser.add_argument(
         "--setup", action="store_true",
         help="[macOS] BlackHoleセットアップガイドを表示して終了",
+    )
+    parser.add_argument(
+        "--minutes", action="store_true",
+        help="議事録を自動生成する（校正後テキストから）",
     )
     parser.add_argument(
         "--no-correct", action="store_true",
@@ -651,10 +720,17 @@ def main():
             else:
                 corrected_text = raw_text
 
+            # 議事録生成
+            minutes_text = None
+            if args.minutes:
+                print("議事録生成中 (Groq Llama 3.3 70B)...")
+                minutes_text = generate_minutes(client, corrected_text)
+
             # 結果出力
             display_results(
                 raw_text,
                 corrected_text,
+                minutes_text=minutes_text,
                 save=not args.no_save,
                 clipboard=not args.no_clipboard,
                 output_dir=args.output_dir,

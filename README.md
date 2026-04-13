@@ -80,6 +80,16 @@ python groq_voice.py --mode both
 
 自分の声とZoomの相手の声を両方キャプチャしてミックスします。
 
+### 議事録を自動生成
+
+```bash
+python groq_voice.py --mode system --minutes
+python groq_voice.py --mode both --minutes
+```
+
+録音 → 文字起こし → テキスト校正 → 議事録生成 を一気に実行します。
+議事録は `output/minutes_YYYYMMDD_HHMMSS.txt` に保存され、クリップボードにもコピーされます。
+
 ## macOS: Zoomシステム音声の設定
 
 Zoom等のシステム音声をキャプチャするには **BlackHole** が必要です。
@@ -115,6 +125,7 @@ python groq_voice.py --mode both
 --monitor SOURCE           [Linux] PulseAudioモニターソース名 (自動検出可)
 --list-devices             利用可能なデバイスを一覧表示
 --setup                    [macOS] BlackHoleセットアップガイドを表示
+--minutes                  議事録を自動生成
 --no-correct               LLM校正をスキップ（生テキストのみ）
 --no-clipboard             クリップボードへのコピーをしない
 --no-save                  ファイルへの保存をしない
