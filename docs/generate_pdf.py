@@ -16,6 +16,7 @@ md_text = md_path.read_text(encoding="utf-8")
 html_body = markdown.markdown(md_text, extensions=["tables", "fenced_code"])
 
 # HTML テンプレート（日本語フォント対応）
+# base_url を設定して画像の相対パスを解決
 html_full = f"""<!DOCTYPE html>
 <html lang="ja">
 <head><meta charset="utf-8"></head>
@@ -106,7 +107,14 @@ hr {{
 strong {{
     color: #c0392b;
 }}
+img {{
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 15px auto;
+}}
 """)
 
-HTML(string=html_full).write_pdf(str(pdf_path), stylesheets=[css])
+# base_url で画像の相対パスを解決（flowchart.png など）
+HTML(string=html_full, base_url=str(SCRIPT_DIR)).write_pdf(str(pdf_path), stylesheets=[css])
 print(f"PDF を生成しました: {pdf_path}")
