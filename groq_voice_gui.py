@@ -32,6 +32,68 @@ from groq_voice import (
 )
 
 
+class ColorButton(tk.Canvas):
+    """macOSでも背景色が正しく表示されるカスタムボタン。"""
+
+    def __init__(self, parent, text="", bg_color="#4CAF50", fg_color="white",
+                 font=("Helvetica", 18, "bold"), height=60, command=None, **kwargs):
+        super().__init__(parent, height=height, highlightthickness=0, **kwargs)
+        self._bg_color = bg_color
+        self._fg_color = fg_color
+        self._font = font
+        self._text = text
+        self._command = command
+        self._enabled = True
+
+        self.bind("<Configure>", self._draw)
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self._draw()
+
+    def _draw(self, event=None):
+        self.delete("all")
+        w = self.winfo_width() or 200
+        h = self.winfo_height() or 60
+        r = 12  # 角丸の半径
+
+        # 角丸長方形を描画
+        self.create_round_rect(2, 2, w - 2, h - 2, r, fill=self._bg_color, outline="")
+        self.create_text(
+            w // 2, h // 2, text=self._text,
+            fill=self._fg_color, font=self._font,
+        )
+
+    def create_round_rect(self, x1, y1, x2, y2, r, **kwargs):
+        self.create_arc(x1, y1, x1 + 2 * r, y1 + 2 * r, start=90, extent=90, style=tk.PIESLICE, **kwargs)
+        self.create_arc(x2 - 2 * r, y1, x2, y1 + 2 * r, start=0, extent=90, style=tk.PIESLICE, **kwargs)
+        self.create_arc(x2 - 2 * r, y2 - 2 * r, x2, y2, start=270, extent=90, style=tk.PIESLICE, **kwargs)
+        self.create_arc(x1, y2 - 2 * r, x1 + 2 * r, y2, start=180, extent=90, style=tk.PIESLICE, **kwargs)
+        self.create_rectangle(x1 + r, y1, x2 - r, y2, **kwargs)
+        self.create_rectangle(x1, y1 + r, x2, y2 - r, **kwargs)
+
+    def _on_click(self, event=None):
+        if self._enabled and self._command:
+            self._command()
+
+    def _on_enter(self, event=None):
+        if self._enabled:
+            self.configure(cursor="hand2")
+
+    def _on_leave(self, event=None):
+        self.configure(cursor="")
+
+    def set_state(self, text=None, bg_color=None, fg_color=None, enabled=True):
+        if text is not None:
+            self._text = text
+        if bg_color is not None:
+            self._bg_color = bg_color
+        if fg_color is not None:
+            self._fg_color = fg_color
+        self._enabled = enabled
+        self._draw()
+
+
 class GroqVoiceApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -90,15 +152,12 @@ class GroqVoiceApp(tk.Tk):
         btn_frame = ttk.Frame(self, padding=10)
         btn_frame.pack(fill=tk.X)
 
-        self.record_btn = tk.Button(
+        self.record_btn = ColorButton(
             btn_frame,
             text="録音開始",
-            font=("Helvetica", 18, "bold"),
-            bg="#4CAF50",
-            fg="white",
-            activebackground="#45a049",
-            activeforeground="white",
-            height=2,
+            bg_color="#4CAF50",
+            fg_color="white",
+            height=70,
             command=self.toggle_recording,
         )
         self.record_btn.pack(fill=tk.X, padx=20)
@@ -170,7 +229,7 @@ class GroqVoiceApp(tk.Tk):
         api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
             self.set_status("エラー: GROQ_API_KEY が未設定です")
-            self.record_btn.configure(state=tk.DISABLED)
+            self.record_btn.set_state(text="APIキー未設定", bg_color="#9E9E9E", enabled=False)
             return
         self.client = create_groq_client()
         self.set_status("準備完了")
@@ -211,7 +270,7 @@ class GroqVoiceApp(tk.Tk):
         self.recording = True
         self.record_start_time = time.time()
 
-        self.record_btn.configure(text="録音停止", bg="#f44336", activebackground="#d32f2f")
+        self.record_btn.set_state(text="録音停止", bg_color="#f44336")
         self.set_status("録音中...")
         self._update_timer()
 
@@ -222,9 +281,7 @@ class GroqVoiceApp(tk.Tk):
             self.timer_id = None
 
         self.set_status("録音停止。処理中...")
-        self.record_btn.configure(
-            text="処理中...", bg="#FF9800", activebackground="#F57C00", state=tk.DISABLED
-        )
+        self.record_btn.set_state(text="処理中...", bg_color="#FF9800", enabled=False)
 
         audio_data = self.recorder.stop()
 
@@ -292,12 +349,7 @@ class GroqVoiceApp(tk.Tk):
         widget.insert("1.0", text)
 
     def _reset_button(self):
-        self.record_btn.configure(
-            text="録音開始",
-            bg="#4CAF50",
-            activebackground="#45a049",
-            state=tk.NORMAL,
-        )
+        self.record_btn.set_state(text="録音開始", bg_color="#4CAF50", enabled=True)
 
     def _update_timer(self):
         if not self.recording:
