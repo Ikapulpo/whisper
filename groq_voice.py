@@ -252,6 +252,15 @@ class MicRecorder:
         )
         self._stream.start()
 
+    def get_recent_samples(self, n_samples: int = 1600) -> np.ndarray:
+        """直近の録音サンプルを取得する（波形表示用）。"""
+        if not self.frames:
+            return np.zeros(n_samples, dtype=np.int16)
+        last = self.frames[-1].flatten()
+        if len(last) >= n_samples:
+            return last[-n_samples:]
+        return np.pad(last, (n_samples - len(last), 0))
+
     def stop(self) -> np.ndarray:
         if self._stream:
             self._stream.stop()
@@ -313,6 +322,17 @@ class LinuxSystemAudioRecorder:
             if chunk:
                 self._raw_data.extend(chunk)
 
+    def get_recent_samples(self, n_samples: int = 1600) -> np.ndarray:
+        """直近の録音サンプルを取得する（波形表示用）。"""
+        if len(self._raw_data) < 2:
+            return np.zeros(n_samples, dtype=np.int16)
+        n_bytes = n_samples * 2  # int16 = 2 bytes
+        raw = bytes(self._raw_data[-n_bytes:])
+        samples = np.frombuffer(raw, dtype=np.int16)
+        if len(samples) >= n_samples:
+            return samples[-n_samples:]
+        return np.pad(samples, (n_samples - len(samples), 0))
+
     def stop(self) -> np.ndarray:
         if self._process:
             self._process.terminate()
@@ -337,6 +357,10 @@ class CombinedRecorder:
     def start(self):
         self.system.start()
         self.mic.start()
+
+    def get_recent_samples(self, n_samples: int = 1600) -> np.ndarray:
+        """直近の録音サンプルを取得する（波形表示用）。マイク側を返す。"""
+        return self.mic.get_recent_samples(n_samples)
 
     def stop(self) -> np.ndarray:
         mic_audio = self.mic.stop()

@@ -4,6 +4,7 @@ Groq Voice Input — GUI版
 
 tkinterベースのGUIフロントエンド。
 groq_voice.py のコアロジックを再利用し、ボタン操作で録音・文字起こし・校正を行う。
+リアルタイム波形モニターで音声入力の有無を視覚的に確認可能。
 """
 
 import os
@@ -14,6 +15,8 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
+
+import numpy as np
 
 from groq_voice import (
     IS_MACOS,
@@ -30,6 +33,9 @@ from groq_voice import (
     save_to_file,
     transcribe_audio,
 )
+
+# 無音判定の閾値（int16の最大値32768に対する比率）
+SILENCE_RMS_THRESHOLD = 100  # RMSがこれ以下なら無音とみなす
 
 
 class ColorButton(tk.Canvas):
@@ -55,9 +61,8 @@ class ColorButton(tk.Canvas):
         self.delete("all")
         w = self.winfo_width() or 200
         h = self.winfo_height() or 60
-        r = 12  # 角丸の半径
+        r = 12
 
-        # 角丸長方形を描画
         self.create_round_rect(2, 2, w - 2, h - 2, r, fill=self._bg_color, outline="")
         self.create_text(
             w // 2, h // 2, text=self._text,
@@ -94,13 +99,124 @@ class ColorButton(tk.Canvas):
         self._draw()
 
 
+class WaveformMonitor(tk.Canvas):
+    """リアルタイム波形表示 + レベルメーター。"""
+
+    def __init__(self, parent, height=80, **kwargs):
+        super().__init__(parent, height=height, bg="#1a1a2e", highlightthickness=0, **kwargs)
+        self._height = height
+        self._warning_visible = False
+        self.bind("<Configure>", self._on_resize)
+        self._draw_idle()
+
+    def _on_resize(self, event=None):
+        pass
+
+    def _draw_idle(self):
+        """待機中の表示。"""
+        self.delete("all")
+        w = self.winfo_width() or 600
+        h = self._height
+        mid_y = h // 2
+
+        # 中央線
+        self.create_line(0, mid_y, w, mid_y, fill="#333355", width=1)
+        self.create_text(
+            w // 2, mid_y, text="録音待機中",
+            fill="#555577", font=("Helvetica", 11),
+        )
+        self._warning_visible = False
+
+    def draw_waveform(self, samples: np.ndarray, rms: float):
+        """波形とレベルメーターを描画する。"""
+        self.delete("all")
+        w = self.winfo_width() or 600
+        h = self._height
+        mid_y = h // 2
+        level_bar_width = 40
+        wave_width = w - level_bar_width - 10
+
+        # ── 波形描画 ──
+        self.create_line(0, mid_y, wave_width, mid_y, fill="#333355", width=1)
+
+        if len(samples) > 0:
+            # サンプルをキャンバス幅にリサンプル
+            step = max(1, len(samples) // wave_width)
+            points = []
+            for i in range(0, min(len(samples), wave_width * step), step):
+                x = i // step
+                val = float(samples[i]) / 32768.0
+                y = mid_y - int(val * (mid_y - 4))
+                points.append(x)
+                points.append(y)
+
+            if len(points) >= 4:
+                # 信号レベルで色分け
+                if rms < SILENCE_RMS_THRESHOLD:
+                    color = "#555577"  # 無音 = 暗い
+                elif rms < 1000:
+                    color = "#4CAF50"  # 小さい = 緑
+                elif rms < 5000:
+                    color = "#8BC34A"  # 普通 = 明るい緑
+                else:
+                    color = "#FF9800"  # 大きい = オレンジ
+                self.create_line(points, fill=color, width=1.5, smooth=True)
+
+        # ── レベルメーター ──
+        bar_x = wave_width + 8
+        bar_h = h - 10
+        bar_y = 5
+
+        # 背景
+        self.create_rectangle(bar_x, bar_y, bar_x + level_bar_width - 4, bar_y + bar_h,
+                              fill="#0d0d1a", outline="#333355")
+
+        # レベルバー
+        level = min(1.0, rms / 10000.0)
+        fill_h = int(bar_h * level)
+        if fill_h > 0:
+            if level < 0.3:
+                bar_color = "#4CAF50"
+            elif level < 0.7:
+                bar_color = "#8BC34A"
+            else:
+                bar_color = "#FF9800"
+            self.create_rectangle(
+                bar_x + 2, bar_y + bar_h - fill_h,
+                bar_x + level_bar_width - 6, bar_y + bar_h,
+                fill=bar_color, outline="",
+            )
+
+        # ── 無音警告 ──
+        if rms < SILENCE_RMS_THRESHOLD:
+            self.create_text(
+                wave_width // 2, mid_y,
+                text="音声信号なし — 入力設定を確認してください",
+                fill="#ff5555", font=("Helvetica", 11, "bold"),
+            )
+            self._warning_visible = True
+        else:
+            self._warning_visible = False
+
+    def draw_processing(self):
+        """処理中の表示。"""
+        self.delete("all")
+        w = self.winfo_width() or 600
+        h = self._height
+        mid_y = h // 2
+        self.create_text(
+            w // 2, mid_y, text="処理中...",
+            fill="#FF9800", font=("Helvetica", 11),
+        )
+
+
 class GroqVoiceApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
         self.title("Groq Voice Input")
-        self.geometry("700x600")
-        self.minsize(500, 450)
+        self.geometry("700x700")
+        self.minsize(500, 550)
 
         # 状態
         self.recording = False
@@ -108,6 +224,8 @@ class GroqVoiceApp(tk.Tk):
         self.recorder = None
         self.record_start_time = 0
         self.timer_id = None
+        self.waveform_id = None
+        self.silence_duration = 0  # 無音が続いた秒数
 
         # 結果
         self.raw_text = ""
@@ -136,20 +254,18 @@ class GroqVoiceApp(tk.Tk):
         )
         mode_combo.pack(side=tk.LEFT, padx=(5, 20))
 
-        # モードラベル
         self.mode_labels = {"mic": "マイク", "system": "システム音声", "both": "マイク+システム"}
         self.mode_label = ttk.Label(top_frame, text="マイク")
         self.mode_label.pack(side=tk.LEFT)
         mode_combo.bind("<<ComboboxSelected>>", self._on_mode_change)
 
-        # 議事録チェックボックス
         self.minutes_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(top_frame, text="議事録生成", variable=self.minutes_var).pack(
             side=tk.RIGHT
         )
 
-        # ── 中央: 録音ボタン ──
-        btn_frame = ttk.Frame(self, padding=10)
+        # ── 録音ボタン ──
+        btn_frame = ttk.Frame(self, padding=(10, 5))
         btn_frame.pack(fill=tk.X)
 
         self.record_btn = ColorButton(
@@ -162,8 +278,15 @@ class GroqVoiceApp(tk.Tk):
         )
         self.record_btn.pack(fill=tk.X, padx=20)
 
+        # ── 波形モニター ──
+        wave_frame = ttk.Frame(self, padding=(10, 5))
+        wave_frame.pack(fill=tk.X)
+
+        self.waveform = WaveformMonitor(wave_frame, height=80)
+        self.waveform.pack(fill=tk.X, padx=20)
+
         # ── ステータスバー ──
-        status_frame = ttk.Frame(self, padding=(10, 0))
+        status_frame = ttk.Frame(self, padding=(10, 2))
         status_frame.pack(fill=tk.X)
 
         self.status_label = ttk.Label(status_frame, text="待機中")
@@ -269,24 +392,39 @@ class GroqVoiceApp(tk.Tk):
         self.recorder.start()
         self.recording = True
         self.record_start_time = time.time()
+        self.silence_duration = 0
 
         self.record_btn.set_state(text="録音停止", bg_color="#f44336")
         self.set_status("録音中...")
         self._update_timer()
+        self._update_waveform()
 
     def stop_recording(self):
         self.recording = False
         if self.timer_id:
             self.after_cancel(self.timer_id)
             self.timer_id = None
+        if self.waveform_id:
+            self.after_cancel(self.waveform_id)
+            self.waveform_id = None
 
+        self.waveform.draw_processing()
         self.set_status("録音停止。処理中...")
         self.record_btn.set_state(text="処理中...", bg_color="#FF9800", enabled=False)
 
         audio_data = self.recorder.stop()
 
         if len(audio_data) == 0:
-            self.set_status("音声が録音されませんでした")
+            self.set_status("音声が録音されませんでした — 入力デバイスの設定を確認してください")
+            self.waveform._draw_idle()
+            self._reset_button()
+            return
+
+        # 全体の音量チェック
+        rms = np.sqrt(np.mean(audio_data.astype(np.float64) ** 2))
+        if rms < SILENCE_RMS_THRESHOLD:
+            self.set_status("無音でした — システム音声の出力先が「複数出力装置」に設定されているか確認してください")
+            self.waveform._draw_idle()
             self._reset_button()
             return
 
@@ -308,6 +446,7 @@ class GroqVoiceApp(tk.Tk):
 
             if not self.raw_text.strip():
                 self.after(0, lambda: self.set_status("音声が認識されませんでした"))
+                self.after(0, self.waveform._draw_idle)
                 self.after(0, self._reset_button)
                 self.processing = False
                 return
@@ -325,9 +464,9 @@ class GroqVoiceApp(tk.Tk):
                 self.after(0, lambda: self.set_status("議事録生成中..."))
                 self.minutes_text = generate_minutes(self.client, self.corrected_text)
                 self.after(0, lambda: self._set_text(self.minutes_text_widget, self.minutes_text))
-                self.after(0, lambda: self.notebook.select(2))  # 議事録タブに切り替え
+                self.after(0, lambda: self.notebook.select(2))
             else:
-                self.after(0, lambda: self.notebook.select(1))  # 校正済みタブに切り替え
+                self.after(0, lambda: self.notebook.select(1))
 
             # クリップボードにコピー
             clip_text = self.minutes_text if self.minutes_text else self.corrected_text
@@ -342,7 +481,32 @@ class GroqVoiceApp(tk.Tk):
 
         finally:
             self.processing = False
+            self.after(0, self.waveform._draw_idle)
             self.after(0, self._reset_button)
+
+    def _update_waveform(self):
+        """100msごとに波形を更新する。"""
+        if not self.recording:
+            return
+
+        try:
+            samples = self.recorder.get_recent_samples(1600)
+            rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+            self.waveform.draw_waveform(samples, rms)
+
+            # 無音カウント（100ms単位で加算）
+            if rms < SILENCE_RMS_THRESHOLD:
+                self.silence_duration += 0.1
+                if self.silence_duration >= 3.0:
+                    self.set_status("録音中... [音声信号なし — 入力設定を確認してください]")
+            else:
+                self.silence_duration = 0
+                elapsed = int(time.time() - self.record_start_time)
+                self.set_status(f"録音中... {elapsed}秒")
+        except Exception:
+            pass
+
+        self.waveform_id = self.after(100, self._update_waveform)
 
     def _set_text(self, widget, text):
         widget.delete("1.0", tk.END)
