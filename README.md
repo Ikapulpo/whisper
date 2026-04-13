@@ -4,7 +4,22 @@ Groq APIを使った音声入力スクリプト。Superwhisperの代替として
 
 macOS / Linux 対応。Zoom会議のシステム音声キャプチャにも対応。
 
-## セットアップ
+## かんたんセットアップ（macOS）
+
+```bash
+git clone https://github.com/ikapulpo/whisper.git
+cd whisper
+bash install.sh
+```
+
+これだけで Homebrew・portaudio・ffmpeg・BlackHole・Pythonパッケージのインストールと APIキーの設定まで全自動で行います。
+
+インストール後は **`start.command` をFinderでダブルクリック** するだけで起動できます。
+
+## 手動セットアップ
+
+<details>
+<summary>クリックで展開</summary>
 
 ### 1. リポジトリを取得
 
@@ -18,7 +33,7 @@ cd whisper
 **macOS:**
 
 ```bash
-brew install portaudio ffmpeg
+brew install portaudio ffmpeg blackhole-2ch
 ```
 
 **Linux (Ubuntu/Debian):**
@@ -52,6 +67,8 @@ source ~/.zshrc
 echo 'export GROQ_API_KEY=your_api_key_here' >> ~/.bashrc
 source ~/.bashrc
 ```
+
+</details>
 
 ## 使い方
 
