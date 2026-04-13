@@ -4,7 +4,7 @@ Groq Voice Input — 音声入力 → Whisper文字起こし → LLM自動校正
 
 Superwhisperの代替として、Groq APIを直接呼び出すPythonスクリプト。
 勝間和代氏のワークフローを再現: 音声入力 → Whisper → Llama 3.3 70B校正
-Zoom会議のシステム音声キャプチャにも対応。
+Zoom会議のシステム音声キャプチャにも対応（macOS / Linux）。
 """
 
 import argparse
@@ -22,6 +22,11 @@ import sounddevice as sd
 from groq import Groq
 from pydub import AudioSegment
 from pydub.silence import split_on_silence
+
+# ── プラットフォーム検出 ──────────────────────────────────────────────────────
+
+IS_MACOS = sys.platform == "darwin"
+IS_LINUX = sys.platform.startswith("linux")
 
 # ── 定数 ──────────────────────────────────────────────────────────────────────
 
@@ -56,28 +61,61 @@ CORRECTION_SYSTEM_PROMPT = """\
 
 def list_audio_sources():
     """利用可能な音声デバイスを一覧表示する。"""
-    print("=== sounddevice デバイス一覧 ===")
+    print("=== 音声デバイス一覧 ===")
     print(sd.query_devices())
     print()
 
-    print("=== PulseAudio ソース一覧 ===")
-    try:
-        result = subprocess.run(
-            ["pactl", "list", "short", "sources"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            print(result.stdout)
+    if IS_MACOS:
+        # BlackHole の検出状況を表示
+        bh = find_blackhole_device()
+        if bh is not None:
+            info = sd.query_devices(bh)
+            print(f"[OK] BlackHole 検出済み: device {bh} - {info['name']}")
         else:
-            print("pactl の実行に失敗しました。PulseAudioが動作していない可能性があります。")
-    except FileNotFoundError:
-        print("pactl が見つかりません。pulseaudio-utils をインストールしてください。")
-    except subprocess.TimeoutExpired:
-        print("pactl がタイムアウトしました。")
+            print("[--] BlackHole が見つかりません。システム音声キャプチャには BlackHole が必要です。")
+            print("     インストール: brew install blackhole-2ch")
+            print("     セットアップ: python groq_voice.py --setup")
+    elif IS_LINUX:
+        print("=== PulseAudio ソース一覧 ===")
+        try:
+            result = subprocess.run(
+                ["pactl", "list", "short", "sources"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                print(result.stdout)
+            else:
+                print("pactl の実行に失敗しました。")
+        except FileNotFoundError:
+            print("pactl が見つかりません。pulseaudio-utils をインストールしてください。")
+        except subprocess.TimeoutExpired:
+            print("pactl がタイムアウトしました。")
+
+
+def find_blackhole_device() -> int | None:
+    """BlackHole デバイスのインデックスを検索する（macOS用）。"""
+    devices = sd.query_devices()
+    for i, dev in enumerate(devices):
+        if "BlackHole" in dev["name"] and dev["max_input_channels"] > 0:
+            return i
+    return None
+
+
+def find_aggregate_device() -> int | None:
+    """集約装置（マイク+BlackHole）のインデックスを検索する（macOS用）。"""
+    devices = sd.query_devices()
+    for i, dev in enumerate(devices):
+        # 集約装置は複数入力チャンネルを持つことが多い
+        name = dev["name"].lower()
+        if dev["max_input_channels"] >= 2 and (
+            "aggregate" in name or "集約" in name or "multi" in name
+        ):
+            return i
+    return None
 
 
 def find_monitor_source() -> str:
-    """PulseAudioモニターソースを自動検出する。"""
+    """PulseAudioモニターソースを自動検出する（Linux用）。"""
     try:
         result = subprocess.run(
             ["pactl", "list", "short", "sources"],
@@ -99,10 +137,63 @@ def find_monitor_source() -> str:
     )
 
 
+def print_setup_guide():
+    """macOSでのBlackHoleセットアップガイドを表示する。"""
+    guide = """
+============================================================
+  BlackHole セットアップガイド（macOS）
+============================================================
+
+Zoom等のシステム音声をキャプチャするには BlackHole が必要です。
+
+【ステップ1】 BlackHole をインストール
+  brew install blackhole-2ch
+
+【ステップ2】 複数出力装置を作成（スピーカー + BlackHole）
+  1. 「Audio MIDI設定」アプリを開く
+     (Spotlight で "Audio MIDI設定" と検索、または
+      /Applications/Utilities/Audio MIDI Setup.app)
+  2. 左下の「＋」ボタン → 「複数出力装置を作成」
+  3. 以下にチェックを入れる:
+     - Mac のスピーカー (Built-in Output / MacBook Proのスピーカー)
+     - BlackHole 2ch
+  4. スピーカーを「マスターデバイス」に設定
+
+【ステップ3】 音声出力を切り替え
+  システム設定 → サウンド → 出力 → 「複数出力装置」を選択
+  (これでスピーカーから音が聞こえつつ、BlackHole にも音声が流れます)
+
+【ステップ4】 動作確認
+  python groq_voice.py --list-devices
+  → BlackHole 2ch が表示されればOK
+
+【使い方】
+  # Zoomシステム音声のみ
+  python groq_voice.py --mode system
+
+  # マイク + Zoom音声（両方同時）
+  python groq_voice.py --mode both
+
+============================================================
+  集約装置の作成（--mode both をより確実に動作させる場合）
+============================================================
+
+「--mode both」はデフォルトで内蔵マイクとBlackHoleの2ストリームを
+同時録音しますが、集約装置を使うとより安定します。
+
+  1. 「Audio MIDI設定」で「＋」→「集約装置を作成」
+  2. 「内蔵マイク」と「BlackHole 2ch」にチェック
+  3. 以下のように使用:
+     python groq_voice.py --device <集約装置のインデックス>
+============================================================
+"""
+    print(guide)
+
+
 # ── レコーダー ────────────────────────────────────────────────────────────────
 
 class MicRecorder:
-    """マイクから録音する（sounddevice使用）。"""
+    """マイクから録音する（sounddevice使用）。macOS / Linux 共通。"""
 
     def __init__(self, device=None, sample_rate=SAMPLE_RATE):
         self.sample_rate = sample_rate
@@ -138,8 +229,23 @@ class MicRecorder:
         return np.concatenate(self.frames, axis=0).flatten()
 
 
-class SystemAudioRecorder:
-    """システム音声を録音する（PulseAudio parec使用）。"""
+class MacSystemAudioRecorder(MicRecorder):
+    """macOS: BlackHole経由でシステム音声を録音する。"""
+
+    def __init__(self, device=None, sample_rate=SAMPLE_RATE):
+        if device is None:
+            device = find_blackhole_device()
+            if device is None:
+                print("エラー: BlackHole が見つかりません。", file=sys.stderr)
+                print("セットアップ方法: python groq_voice.py --setup", file=sys.stderr)
+                sys.exit(1)
+            info = sd.query_devices(device)
+            print(f"BlackHole 検出: device {device} - {info['name']}")
+        super().__init__(device=device, sample_rate=sample_rate)
+
+
+class LinuxSystemAudioRecorder:
+    """Linux: PulseAudio parec経由でシステム音声を録音する。"""
 
     def __init__(self, monitor_source=None, sample_rate=SAMPLE_RATE):
         self.monitor_source = monitor_source
@@ -188,9 +294,12 @@ class SystemAudioRecorder:
 class CombinedRecorder:
     """マイク＋システム音声を同時録音し、ミックスする。"""
 
-    def __init__(self, mic_device=None, monitor_source=None):
+    def __init__(self, mic_device=None, system_device=None, monitor_source=None):
         self.mic = MicRecorder(device=mic_device)
-        self.system = SystemAudioRecorder(monitor_source=monitor_source)
+        if IS_MACOS:
+            self.system = MacSystemAudioRecorder(device=system_device)
+        else:
+            self.system = LinuxSystemAudioRecorder(monitor_source=monitor_source)
 
     def start(self):
         self.system.start()
@@ -353,11 +462,16 @@ def correct_text(client: Groq, raw_text: str) -> str:
 # ── 出力 ──────────────────────────────────────────────────────────────────────
 
 def copy_to_clipboard(text: str) -> bool:
-    """テキストをクリップボードにコピーする（xclip/xsel使用）。"""
-    for cmd in [
-        ["xclip", "-selection", "clipboard"],
-        ["xsel", "--clipboard", "--input"],
-    ]:
+    """テキストをクリップボードにコピーする。macOS: pbcopy / Linux: xclip,xsel"""
+    if IS_MACOS:
+        cmds = [["pbcopy"]]
+    else:
+        cmds = [
+            ["xclip", "-selection", "clipboard"],
+            ["xsel", "--clipboard", "--input"],
+        ]
+
+    for cmd in cmds:
         try:
             subprocess.run(cmd, input=text.encode("utf-8"), check=True, timeout=5)
             return True
@@ -399,7 +513,10 @@ def display_results(
         if copy_to_clipboard(corrected_text):
             print("-> クリップボードにコピーしました")
         else:
-            print("-> クリップボードへのコピーに失敗（xclip/xsel をインストールしてください）")
+            if IS_MACOS:
+                print("-> クリップボードへのコピーに失敗しました")
+            else:
+                print("-> クリップボードへのコピーに失敗（xclip/xsel をインストールしてください）")
 
     if save:
         filepath = save_to_file(corrected_text, output_dir)
@@ -422,11 +539,15 @@ def parse_args():
     )
     parser.add_argument(
         "--monitor", type=str, default=None,
-        help="PulseAudioモニターソース名 (未指定なら自動検出)",
+        help="[Linux] PulseAudioモニターソース名 (未指定なら自動検出)",
     )
     parser.add_argument(
         "--list-devices", action="store_true",
         help="利用可能な音声デバイスを一覧表示して終了",
+    )
+    parser.add_argument(
+        "--setup", action="store_true",
+        help="[macOS] BlackHoleセットアップガイドを表示して終了",
     )
     parser.add_argument(
         "--no-correct", action="store_true",
@@ -447,24 +568,46 @@ def parse_args():
     return parser.parse_args()
 
 
+def create_recorder(args):
+    """プラットフォームとモードに応じてレコーダーを作成する。"""
+    if args.mode == "mic":
+        return MicRecorder(device=args.device)
+
+    if args.mode == "system":
+        if IS_MACOS:
+            return MacSystemAudioRecorder(device=args.device)
+        else:
+            return LinuxSystemAudioRecorder(monitor_source=args.monitor)
+
+    # both
+    if IS_MACOS:
+        return CombinedRecorder(mic_device=args.device, system_device=None)
+    else:
+        return CombinedRecorder(mic_device=args.device, monitor_source=args.monitor)
+
+
 def main():
     args = parse_args()
+
+    if args.setup:
+        if IS_MACOS:
+            print_setup_guide()
+        else:
+            print("--setup は macOS 専用です。")
+            print("Linux では pulseaudio-utils をインストールしてください:")
+            print("  sudo apt install pulseaudio-utils")
+        return
 
     if args.list_devices:
         list_audio_sources()
         return
 
     client = create_groq_client()
-
-    # レコーダーを作成
-    if args.mode == "mic":
-        recorder = MicRecorder(device=args.device)
-    elif args.mode == "system":
-        recorder = SystemAudioRecorder(monitor_source=args.monitor)
-    else:
-        recorder = CombinedRecorder(mic_device=args.device, monitor_source=args.monitor)
+    recorder = create_recorder(args)
 
     mode_label = {"mic": "マイク", "system": "システム音声", "both": "マイク+システム音声"}
+    platform_label = "macOS" if IS_MACOS else "Linux"
+    print(f"プラットフォーム: {platform_label}")
     print(f"モード: {mode_label[args.mode]}")
     print("Enterキーで録音開始、もう一度Enterキーで録音停止")
     print("Ctrl+C で終了")
